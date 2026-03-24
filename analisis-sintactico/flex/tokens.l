@@ -1,0 +1,32 @@
+%{
+
+#include<stdio.h>
+
+#define ID 1  //Identifier token
+#define ER 2  //Error token
+
+%}
+
+low    [a-z]
+upp    [A-Z]
+number [0-9]
+
+%option noyywrap
+
+%%
+
+({low}|{upp})({low}|{upp})*({number})  return ID;
+
+(.)*                                   return ER;
+
+%%
+
+int main()
+{
+  int token = yylex();
+  if(token==ID)
+    printf("Allowed\n");
+  else if(token==ER)
+    printf("Not allowed\n");
+  return 1;
+}
