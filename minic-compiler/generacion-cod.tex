@@ -1,0 +1,534 @@
+\documentclass{beamer}
+
+\usetheme{AnnArbor}
+\usecolortheme{beaver}
+
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usepackage{listings}
+\usetikzlibrary{trees,positioning,arrows.meta}
+
+\title{Fundamentos de Generación de Código}
+\subtitle{Compiladores}
+\author{}
+\date{}
+
+\lstset{
+    basicstyle=\ttfamily\scriptsize,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    frame=single,
+    breaklines=true,
+    showstringspaces=false
+}
+
+\begin{document}
+
+%------------------------------------------------
+\begin{frame}
+\titlepage
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{Objetivo de la Clase}
+
+Al finalizar la clase, el estudiante comprenderá:
+
+\vspace{0.3cm}
+
+\begin{itemize}
+    \item el pipeline general de un compilador;
+    \item qué hace la fase de generación de código;
+    \item qué son AST, tripletas y cuádruplos;
+    \item cómo se genera ensamblador;
+    \item cómo se traducen expresiones y llamadas a función.
+\end{itemize}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{Pipeline General del Compilador}
+
+\centering
+
+\begin{tikzpicture}[
+node distance=1.0cm,
+>=Stealth,
+every node/.style={
+draw,
+rounded corners,
+font=\scriptsize,
+align=center,
+minimum width=4.2cm
+}
+]
+
+\node[fill=blue!15] (src) {Código Fuente\\programa.c};
+
+\node[fill=green!20, below of=src] (lex) {
+Análisis Léxico\\
+Tokens
+};
+
+\node[fill=green!20, below of=lex] (syn) {
+Análisis Sintáctico\\
+AST / estructura
+};
+
+\node[fill=green!20, below of=syn] (sem) {
+Análisis Semántico\\
+Tipos, ámbitos, funciones
+};
+
+\node[fill=yellow!25, below of=sem] (ir) {
+Representación Intermedia\\
+Tripletas / Cuádruplos
+};
+
+\node[fill=orange!25, below of=ir] (gen) {
+Generación de Código\\
+Ensamblador
+};
+
+\node[fill=red!20, below of=gen] (exe) {
+Código Objeto\\
+Ejecutable
+};
+
+\draw[->] (src) -- (lex);
+\draw[->] (lex) -- (syn);
+\draw[->] (syn) -- (sem);
+\draw[->] (sem) -- (ir);
+\draw[->] (ir) -- (gen);
+\draw[->] (gen) -- (exe);
+
+\end{tikzpicture}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{¿Qué es Generación de Código?}
+
+\begin{block}{Definición}
+La generación de código transforma estructuras abstractas validadas por el compilador en instrucciones cercanas a la máquina.
+\end{block}
+
+\vspace{0.4cm}
+
+La entrada del generador puede ser:
+
+\begin{itemize}
+    \item AST,
+    \item tripletas,
+    \item cuádruplos,
+    \item código de tres direcciones.
+\end{itemize}
+
+\vspace{0.4cm}
+
+La salida puede ser:
+
+\begin{itemize}
+    \item ensamblador,
+    \item código objeto,
+    \item ejecutables.
+\end{itemize}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}[fragile]{Ejemplo Base}
+
+Usaremos:
+
+\begin{lstlisting}[language=C]
+x = a + b * c;
+\end{lstlisting}
+
+\vspace{0.4cm}
+
+Este ejemplo permite estudiar:
+
+\begin{itemize}
+    \item precedencia;
+    \item AST;
+    \item tripletas;
+    \item cuádruplos;
+    \item generación de ensamblador.
+\end{itemize}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{AST de la Expresión}
+
+\centering
+
+\begin{tikzpicture}[
+level distance=1.1cm,
+sibling distance=2.4cm,
+every node/.style={
+draw,
+rounded corners,
+fill=blue!12,
+font=\small
+}
+]
+
+\node {=}
+child { node {x} }
+child {
+    node {+}
+    child { node {a} }
+    child {
+        node {*}
+        child { node {b} }
+        child { node {c} }
+    }
+};
+
+\end{tikzpicture}
+
+\vspace{0.5cm}
+
+\begin{block}{Interpretación}
+Primero se calcula \texttt{b * c}, después se suma con \texttt{a}.
+\end{block}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}[fragile]{Código de Tres Direcciones}
+
+Para:
+
+\begin{lstlisting}[language=C]
+x = a + b * c;
+\end{lstlisting}
+
+se genera:
+
+\begin{lstlisting}
+t1 = b * c
+t2 = a + t1
+x  = t2
+\end{lstlisting}
+
+\vspace{0.4cm}
+
+Cada instrucción contiene una sola operación principal.
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{Tripletas}
+
+Forma general:
+
+\[
+(op,\; arg_1,\; arg_2)
+\]
+
+\vspace{0.3cm}
+
+Para:
+
+\[
+x = a + b * c
+\]
+
+\centering
+
+\begin{tabular}{|c|c|c|c|}
+\hline
+Índice & Operador & Arg1 & Arg2 \\
+\hline
+0 & * & b & c \\
+\hline
+1 & + & a & (0) \\
+\hline
+2 & = & x & (1) \\
+\hline
+\end{tabular}
+
+\vspace{0.4cm}
+
+\begin{block}{Idea}
+Las tripletas referencian resultados previos usando índices.
+\end{block}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{Cuádruplos}
+
+Forma general:
+
+\[
+(op,\; arg_1,\; arg_2,\; resultado)
+\]
+
+\vspace{0.3cm}
+
+\centering
+
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+Índice & Operador & Arg1 & Arg2 & Resultado \\
+\hline
+0 & * & b & c & t1 \\
+\hline
+1 & + & a & t1 & t2 \\
+\hline
+2 & = & t2 & -- & x \\
+\hline
+\end{tabular}
+
+\vspace{0.4cm}
+
+\begin{block}{Ventaja}
+Los cuádruplos hacen explícitos los temporales.
+\end{block}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}[fragile]{Ejemplo: Tripleta a Ensamblador}
+
+Tripleta:
+
+\[
+(*,\; b,\; c)
+\]
+
+\vspace{0.3cm}
+
+Interpretación:
+
+\[
+resultado_0 = b * c
+\]
+
+\vspace{0.3cm}
+
+Ensamblador conceptual:
+
+\begin{lstlisting}
+movl b, %eax
+imull c, %eax
+\end{lstlisting}
+
+\vspace{0.3cm}
+
+\begin{itemize}
+    \item \texttt{b} se carga en \texttt{\%eax}.
+    \item \texttt{c} multiplica el contenido del registro.
+    \item El resultado queda en \texttt{\%eax}.
+\end{itemize}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}[fragile]{Ejemplo Completo: Tripletas a ASM}
+
+Tripletas:
+
+\begin{lstlisting}
+0: (*, b, c)
+1: (+, a, (0))
+2: (=, x, (1))
+\end{lstlisting}
+
+\vspace{0.3cm}
+
+Ensamblador conceptual:
+
+\begin{lstlisting}
+movl b, %eax
+imull c, %eax
+
+movl a, %ebx
+addl %eax, %ebx
+
+movl %ebx, x
+\end{lstlisting}
+
+\vspace{0.3cm}
+
+La tripleta 0 produce el valor temporal utilizado por la tripleta 1.
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}[fragile]{Ejemplo: Cuádruplos a ASM}
+
+Cuádruplos:
+
+\begin{lstlisting}
+(*, b, c, t1)
+(+, a, t1, t2)
+(=, t2, --, x)
+\end{lstlisting}
+
+\vspace{0.3cm}
+
+Ensamblador conceptual:
+
+\begin{lstlisting}
+movl b, %eax
+imull c, %eax
+movl %eax, t1
+
+movl a, %ebx
+addl t1, %ebx
+movl %ebx, t2
+
+movl t2, x
+\end{lstlisting}
+
+\vspace{0.3cm}
+
+\begin{block}{Observación}
+Los cuádruplos generan ensamblador más explícito porque los temporales ya están definidos.
+\end{block}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}[fragile]{Ejemplo: Llamada a Función}
+
+Código C:
+
+\begin{lstlisting}[language=C]
+r = suma(a, b);
+\end{lstlisting}
+
+Código intermedio:
+
+\begin{lstlisting}
+param a
+param b
+t1 = call suma, 2
+r = t1
+\end{lstlisting}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}[fragile]{Llamada a Función a Ensamblador}
+
+Ensamblador conceptual:
+
+\begin{lstlisting}
+movl a, %edi
+movl b, %esi
+
+call suma
+
+movl %eax, r
+\end{lstlisting}
+
+\vspace{0.3cm}
+
+\begin{itemize}
+    \item Los argumentos se colocan en registros.
+    \item \texttt{call} transfiere el control.
+    \item El valor de retorno queda en \texttt{\%eax}.
+\end{itemize}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{Bloques Básicos}
+
+Un bloque básico es una secuencia de instrucciones con:
+
+\begin{itemize}
+    \item una sola entrada;
+    \item una sola salida;
+    \item sin saltos internos.
+\end{itemize}
+
+\vspace{0.4cm}
+
+Ejemplo:
+
+\[
+t1 = b * c
+\]
+
+\[
+t2 = a + t1
+\]
+
+\[
+x = t2
+\]
+
+\end{frame}
+
+
+%------------------------------------------------
+\begin{frame}[fragile]{Demostración Terminal}
+
+Generar ensamblador:
+
+\begin{lstlisting}[language=bash]
+gcc -S programa.c -o programa.s
+\end{lstlisting}
+
+Mostrar ensamblador:
+
+\begin{lstlisting}[language=bash]
+cat programa.s
+\end{lstlisting}
+
+Generar objeto:
+
+\begin{lstlisting}[language=bash]
+gcc -c programa.s -o programa.o
+\end{lstlisting}
+
+Generar ejecutable:
+
+\begin{lstlisting}[language=bash]
+gcc programa.o -o programa
+\end{lstlisting}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{Resumen Conceptual}
+
+\begin{itemize}
+    \item El análisis léxico produce tokens.
+    \item El análisis sintáctico produce estructura.
+    \item El análisis semántico valida significado.
+    \item La generación de código produce instrucciones ejecutables.
+    \item Las tripletas usan índices.
+    \item Los cuádruplos usan temporales explícitos.
+    \item El ensamblador utiliza registros e instrucciones reales.
+\end{itemize}
+
+\end{frame}
+
+%------------------------------------------------
+\begin{frame}{Frase Final}
+
+\begin{block}{Idea Central}
+La generación de código transforma estructuras abstractas validadas por el compilador en instrucciones ejecutables para la arquitectura destino.
+\end{block}
+
+\vspace{0.5cm}
+
+\centering
+
+\Large
+
+Código Fuente $\rightarrow$ AST $\rightarrow$ Tripletas / Cuádruplos $\rightarrow$ ASM $\rightarrow$ Ejecutable
+
+\end{frame}
+
+\end{document}
